@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace kafka.api.Controllers
@@ -21,16 +22,15 @@ namespace kafka.api.Controllers
         private readonly ILogger<WeatherForecastController> _logger;
         private readonly CancellationTokenSource _cts;
 
-        private readonly ProducerConfig _config;
-        private IProducer<Null, string> _producer;
+        private KafkaDependentProducer<Null, string> _producer;
+        private readonly string _topic;
 
-        public WeatherForecastController(ILogger<WeatherForecastController> logger)
+        public WeatherForecastController(ILogger<WeatherForecastController> logger, IConfiguration config, KafkaDependentProducer<Null, string> producer)
         {
             _logger = logger;
             _cts = new CancellationTokenSource();
-            _config = new ProducerConfig
-            { BootstrapServers = "localhost:9092", Acks = Acks.Leader };
-            _producer = new ProducerBuilder<Null, string>(_config).Build();
+            _producer = producer;
+            this._topic = config.GetValue<string>("Kafka:Topic");
         }
 
         [HttpGet]
@@ -46,28 +46,53 @@ namespace kafka.api.Controllers
             .ToArray();
         }
 
-        private readonly string topic = "simpletalk_topic";
-        [HttpPost("kafka")]
+        [HttpPost("kafkaasync")]
         public async Task<IActionResult> Post([FromQuery] string message)
         {
-            // return Created(string.Empty, await SendToKafka(topic, message));
-
-            return Created(string.Empty, await Task.Run(() => SendToKafka(topic, message).ConfigureAwait(false)).ConfigureAwait(false));
+            return Created(string.Empty, await Task.Run(() => SendToKafka(this._topic, message).ConfigureAwait(false)).ConfigureAwait(false));
         }
-        private async Task<Object> SendToKafka(string topic, string message)
+        private async Task SendToKafka(string topic, string message)
         {
             this._logger.LogInformation($"Send event for message - {message}");
 
             try
             {
-                return await _producer.ProduceAsync(topic, new Message<Null, string> { Value = message }).ConfigureAwait(false);
+                await _producer.ProduceAsync(topic, new Message<Null, string> { Value = message }).ConfigureAwait(false);
             }
-            catch (Exception e)
+            catch (ProduceException<Null, string> pex)
             {
-                _logger.LogError($"Oops, something went wrong: {e}");
-                this._producer?.Dispose();
+                _logger.LogError($"Oops, something went wrong: {pex.Error}");
+                this._producer?.Flush(TimeSpan.FromSeconds(5));
             }
-            return Task.CompletedTask;
+            catch (System.Exception ex)
+            {
+                _logger.LogError(ex.InnerException?.Message ?? ex.Message);
+                this._producer?.Flush(TimeSpan.FromSeconds(5));
+            }
+        }
+
+        [HttpPost("kafkasync")]
+        public async Task<IActionResult> PostSync([FromQuery] string message)
+        {
+            Action<DeliveryReport<Null, string>> handler = r =>
+            {
+                if (r.Error.IsError || r.Status == PersistenceStatus.NotPersisted)
+                    _logger.LogError($"Error: {r.Error.Reason}, Message - {r.Message.Value}");
+                else
+                    _logger.LogInformation($"Delivered message - {r.Topic}, with partition - {r.TopicPartition}, with offset - {r.Offset}");
+            };
+
+            try
+            {
+                this._producer.Produce(this._topic, new Message<Null, string> { Value = message }, handler);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex.Message);
+                return BadRequest(ex.Message);
+            }
+            this._producer.Flush(TimeSpan.FromSeconds(5));
+            return Ok();
         }
     }
 }

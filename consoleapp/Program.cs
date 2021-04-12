@@ -117,8 +117,7 @@ namespace consoleapp
             // System.Net.ServicePointManager.ServerCertificateValidationCallback += (s, cert, chain, sslPolicyErrors) => true;
             using (var client = new HttpClient())
             {
-                int messageLimit = 10;
-                client.BaseAddress = new Uri("http://localhost:5000/");
+                int messageLimit = 200;
                 client.DefaultRequestHeaders.Accept.Clear();
                 client.DefaultRequestHeaders.Accept.Add(
                                                 new MediaTypeWithQualityHeaderValue("application/json"));
@@ -132,7 +131,7 @@ namespace consoleapp
                 };
 
                 IList<Task<HttpResponseMessage>> tasks = new List<Task<HttpResponseMessage>>();
-                while (messageLimit-- > 0)
+                while (messageLimit-- > 1)
                 {
                     string message = $"Message #{messageLimit}";
                     message = System.Web.HttpUtility.UrlEncode(message);
@@ -140,7 +139,7 @@ namespace consoleapp
                     {
                         var task = Task<HttpResponseMessage>.Run(async () =>
                         {
-                            var uriBuilder = new UriBuilder($"http://localhost:5000/api/kafka?message={message}");
+                            var uriBuilder = new UriBuilder($"http://localhost:5000/api/kafkasync?message={message}");
                             var msg = new HttpRequestMessage(HttpMethod.Post, uriBuilder.ToString());
 
                             return await client.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);

@@ -19,12 +19,15 @@ namespace kafka.api
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddSingleton<KafkaClientHandle>();
+            services.AddSingleton<KafkaDependentProducer<Confluent.Kafka.Null, string>>();
+            services.AddHostedService<KafkaConsumerHandler>();
+
             services.AddControllers();
             services.AddSwaggerGen(c =>
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "kafka.api", Version = "v1" });
             });
-            services.AddHostedService<KafkaConsumerHandler>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
