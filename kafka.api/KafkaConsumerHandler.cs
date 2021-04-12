@@ -26,7 +26,10 @@ namespace kafka
 
         protected override Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            Task.Factory.StartNew(async () => await StartLoop(stoppingToken), stoppingToken, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+            Task.Factory.StartNew(() => StartLoop(
+                                        stoppingToken), stoppingToken,
+                                        TaskCreationOptions.LongRunning,
+                                        TaskScheduler.Default).ConfigureAwait(false);
 
             return Task.CompletedTask;
         }
@@ -45,24 +48,29 @@ namespace kafka
                 cancelToken.CancelAfter(TimeSpan.FromSeconds(5));
             };
 
-            try
+
+            while (true)
             {
-                while (true)
+                try
                 {
                     var consumer = this._consumer.Consume(cancelToken.Token);
                     logger.LogInformation($"Message: {consumer.Message.Value} received from {consumer.TopicPartitionOffset}");
                     // await Task.Delay(1000);
                 }
+                catch (ConsumeException cex)
+                {
+                    logger.LogError(cex.InnerException?.Message ?? cex.Message);
+                    logger.LogCritical(cex.Error.Reason);
+
+                    if (cex.Error.IsFatal)
+                        break;
+                }
+                catch (OperationCanceledException oex)
+                {
+                    logger.LogError(oex.InnerException?.Message ?? oex.Message);
+                }
             }
-            catch (ConsumeException cex)
-            {
-                logger.LogError(cex.InnerException?.Message ?? cex.Message);
-                logger.LogCritical(cex.Error.Reason);
-            }
-            catch (OperationCanceledException oex)
-            {
-                logger.LogError(oex.InnerException?.Message ?? oex.Message);
-            }
+
             return Task.CompletedTask;
         }
 

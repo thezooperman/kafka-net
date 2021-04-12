@@ -52,7 +52,7 @@ namespace kafka.api.Controllers
         {
             // return Created(string.Empty, await SendToKafka(topic, message));
 
-            return Created(string.Empty, await Task.Run(async () => await SendToKafka(topic, message)).ConfigureAwait(false));
+            return Created(string.Empty, await Task.Run(() => SendToKafka(topic, message).ConfigureAwait(false)).ConfigureAwait(false));
         }
         private async Task<Object> SendToKafka(string topic, string message)
         {

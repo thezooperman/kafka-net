@@ -1,12 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Confluent.Kafka;
 
 namespace consoleapp
 {
@@ -120,7 +117,7 @@ namespace consoleapp
             // System.Net.ServicePointManager.ServerCertificateValidationCallback += (s, cert, chain, sslPolicyErrors) => true;
             using (var client = new HttpClient())
             {
-                int messageLimit = 5;
+                int messageLimit = 10;
                 client.BaseAddress = new Uri("http://localhost:5000/");
                 client.DefaultRequestHeaders.Accept.Clear();
                 client.DefaultRequestHeaders.Accept.Add(
@@ -137,22 +134,22 @@ namespace consoleapp
                 IList<Task<HttpResponseMessage>> tasks = new List<Task<HttpResponseMessage>>();
                 while (messageLimit-- > 0)
                 {
-                    var message = $"Message #{messageLimit}";
-
+                    string message = $"Message #{messageLimit}";
+                    message = System.Web.HttpUtility.UrlEncode(message);
                     try
                     {
                         var task = Task<HttpResponseMessage>.Run(async () =>
                         {
-                            var content = new StringContent($"message=\"{message}\"", Encoding.UTF8, "application/json");
-                            var msg = new HttpRequestMessage(HttpMethod.Post, $"api/kafka?message={message}");
+                            var uriBuilder = new UriBuilder($"http://localhost:5000/api/kafka?message={message}");
+                            var msg = new HttpRequestMessage(HttpMethod.Post, uriBuilder.ToString());
 
-                            return await client.SendAsync(msg, HttpCompletionOption.ResponseContentRead, cts.Token);
+                            return await client.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
                         }, cts.Token);
 
                         task.ContinueWith((t) =>
                         {
-                            if (t.IsCompletedSuccessfully && t.IsCompleted)
-                                System.Console.WriteLine($"For message - {t.Result}");
+                            if (t.IsCompletedSuccessfully)
+                                System.Console.WriteLine($"Message - {t.Result.RequestMessage}, Status: {t.Result.StatusCode}");
                             else
                                 System.Console.WriteLine(t.Exception.Flatten().Message);
                         }, cts.Token);
@@ -162,6 +159,7 @@ namespace consoleapp
                     catch (InvalidOperationException iex)
                     {
                         System.Console.WriteLine(iex.InnerException?.Message ?? iex.Message);
+                        break;
                     }
                     catch (HttpRequestException hex)
                     {
@@ -172,7 +170,15 @@ namespace consoleapp
                         System.Console.WriteLine(tex.InnerException?.Message ?? tex.Message);
                     }
                 }
-                Task.WaitAll(tasks.ToArray());
+                try
+                {
+                    Task.WhenAll(tasks).Wait();
+                }
+                catch (System.AggregateException aex)
+                {
+                    System.Console.WriteLine(aex.Flatten().Message);
+                }
+
                 if (cts.IsCancellationRequested)
                     client.CancelPendingRequests();
             }
