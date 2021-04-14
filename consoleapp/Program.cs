@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
+using Confluent.Kafka;
 
 namespace consoleapp
 {
@@ -11,26 +13,57 @@ namespace consoleapp
     {
         static Task Main(string[] args)
         {
-            // const string topic_name = "sample_messages";
+            const string topic_name = "simpletalk_topic";
 
             #region Producer
-            // var config = new ProducerConfig
-            // {
-            //     BootstrapServers = "localhost:9092",
-            //     LingerMs = 5
-            // };
+            var config = new ProducerConfig
+            {
+                BootstrapServers = "localhost:9092",
+                LingerMs = 5,
+                Acks = Acks.Leader
+            };
 
-            // // Create a producer that can be used to send messages to kafka that have no key and a value of type string 
-            // using var p = new ProducerBuilder<Null, string>(config).Build();
+            // Create a producer that can be used to send messages to kafka that have no key and a value of type string 
+            using var p = new ProducerBuilder<Null, string>(config).Build();
 
-            // var i = 501;
-            // while (true)
+            var i = 2000001;
+            Stopwatch sw = new Stopwatch();
+
+            sw.Start();
+            Parallel.For(1L, 2000000L, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount - 1 }, (x) =>
+              {
+                  string msg = System.Net.WebUtility.UrlEncode($"Message #{x}");
+                  var message = new Message<Null, string>
+                  {
+                      Value = msg
+                  };
+                  Action<DeliveryReport<Null, string>> handler = r =>
+                                 {
+                                     var msg = $@"Deliverd message - {r.Topic}, with message - {r.Message.Value},
+                        topic partition - {r.TopicPartition},
+                        offset - {r.Offset}";
+                                     System.Console.WriteLine(!r.Error.IsError ? msg : $"Error: {r.Error.Reason}");
+                                 };
+                  p.Produce(topic_name, message, handler);
+                  //   p.Poll(TimeSpan.FromMilliseconds(1));
+
+                  if (i % 50 == 0)
+                  {
+                      p.Flush(TimeSpan.FromSeconds(5));
+                      // Task.Delay(100);
+                  }
+              });
+            sw.Stop();
+            System.Console.WriteLine($"Total time taken for operation: {sw.Elapsed}");
+            // while (i > 0)
             // {
             //     // Construct the message to send (generic type must match what was used above when creating the producer)
+            //     string msg = System.Net.WebUtility.UrlEncode($"Message #{--i}");
             //     var message = new Message<Null, string>
             //     {
-            //         Value = $"Message #{++i}"
+            //         Value = msg
             //     };
+
 
             //     // Send the message to our test topic in Kafka                
             //     // var dr = await p.ProduceAsync("test", message);
@@ -55,10 +88,10 @@ namespace consoleapp
             //     p.Produce(topic_name, message, handler);
 
             //     if (i % 50 == 0)
-            //         p.Flush(TimeSpan.FromSeconds(10));
-            //     if (i > 700)
-            //         break;
-            //     // await Task.Delay(100);
+            //     {
+            //         p.Flush(TimeSpan.FromSeconds(5));
+            //         // Task.Delay(100);
+            //     }
             // }
 
             #endregion
@@ -115,72 +148,72 @@ namespace consoleapp
 
             #region Call-API
             // System.Net.ServicePointManager.ServerCertificateValidationCallback += (s, cert, chain, sslPolicyErrors) => true;
-            using (var client = new HttpClient())
-            {
-                int messageLimit = 200;
-                client.DefaultRequestHeaders.Accept.Clear();
-                client.DefaultRequestHeaders.Accept.Add(
-                                                new MediaTypeWithQualityHeaderValue("application/json"));
+            // using (var client = new HttpClient())
+            // {
+            //     int messageLimit = 2000000;
+            //     client.DefaultRequestHeaders.Accept.Clear();
+            //     client.DefaultRequestHeaders.Accept.Add(
+            //                                     new MediaTypeWithQualityHeaderValue("application/json"));
 
-                CancellationTokenSource cts = new CancellationTokenSource();
-                Console.CancelKeyPress += (_, e) =>
-                {
-                    System.Diagnostics.Trace.TraceError("Cancellation requested", e);
-                    e.Cancel = true;
-                    cts.CancelAfter(TimeSpan.FromSeconds(5));
-                };
+            //     CancellationTokenSource cts = new CancellationTokenSource();
+            //     Console.CancelKeyPress += (_, e) =>
+            //     {
+            //         System.Diagnostics.Trace.TraceError("Cancellation requested", e);
+            //         e.Cancel = true;
+            //         cts.CancelAfter(TimeSpan.FromSeconds(5));
+            //     };
 
-                IList<Task<HttpResponseMessage>> tasks = new List<Task<HttpResponseMessage>>();
-                while (messageLimit-- > 1)
-                {
-                    string message = $"Message #{messageLimit}";
-                    message = System.Web.HttpUtility.UrlEncode(message);
-                    try
-                    {
-                        var task = Task<HttpResponseMessage>.Run(async () =>
-                        {
-                            var uriBuilder = new UriBuilder($"http://localhost:5000/api/kafkasync?message={message}");
-                            var msg = new HttpRequestMessage(HttpMethod.Post, uriBuilder.ToString());
+            //     IList<Task<HttpResponseMessage>> tasks = new List<Task<HttpResponseMessage>>();
+            //     while (messageLimit-- > 1)
+            //     {
+            //         string message = $"Message #{messageLimit}";
+            //         message = System.Web.HttpUtility.UrlEncode(message);
+            //         try
+            //         {
+            //             var task = Task<HttpResponseMessage>.Run(async () =>
+            //             {
+            //                 var uriBuilder = new UriBuilder($"http://localhost:5000/api/kafkaasync?message={message}");
+            //                 var msg = new HttpRequestMessage(HttpMethod.Post, uriBuilder.ToString());
 
-                            return await client.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
-                        }, cts.Token);
+            //                 return await client.SendAsync(msg, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+            //             }, cts.Token);
 
-                        task.ContinueWith((t) =>
-                        {
-                            if (t.IsCompletedSuccessfully)
-                                System.Console.WriteLine($"Message - {t.Result.RequestMessage}, Status: {t.Result.StatusCode}");
-                            else
-                                System.Console.WriteLine(t.Exception.Flatten().Message);
-                        }, cts.Token);
+            //             task.ContinueWith((t) =>
+            //             {
+            //                 if (t.IsCompletedSuccessfully)
+            //                     System.Console.WriteLine($"Message - {t.Result.RequestMessage}, Status: {t.Result.StatusCode}");
+            //                 else
+            //                     System.Console.WriteLine(t.Exception.Flatten().Message);
+            //             }, cts.Token);
 
-                        tasks.Add(task);
-                    }
-                    catch (InvalidOperationException iex)
-                    {
-                        System.Console.WriteLine(iex.InnerException?.Message ?? iex.Message);
-                        break;
-                    }
-                    catch (HttpRequestException hex)
-                    {
-                        System.Console.WriteLine(hex.InnerException?.Message ?? hex.Message);
-                    }
-                    catch (TaskCanceledException tex)
-                    {
-                        System.Console.WriteLine(tex.InnerException?.Message ?? tex.Message);
-                    }
-                }
-                try
-                {
-                    Task.WhenAll(tasks).Wait();
-                }
-                catch (System.AggregateException aex)
-                {
-                    System.Console.WriteLine(aex.Flatten().Message);
-                }
+            //             tasks.Add(task);
+            //         }
+            //         catch (InvalidOperationException iex)
+            //         {
+            //             System.Console.WriteLine(iex.InnerException?.Message ?? iex.Message);
+            //             break;
+            //         }
+            //         catch (HttpRequestException hex)
+            //         {
+            //             System.Console.WriteLine(hex.InnerException?.Message ?? hex.Message);
+            //         }
+            //         catch (TaskCanceledException tex)
+            //         {
+            //             System.Console.WriteLine(tex.InnerException?.Message ?? tex.Message);
+            //         }
+            //     }
+            //     try
+            //     {
+            //         Task.WhenAll(tasks).Wait();
+            //     }
+            //     catch (System.AggregateException aex)
+            //     {
+            //         System.Console.WriteLine(aex.Flatten().Message);
+            //     }
 
-                if (cts.IsCancellationRequested)
-                    client.CancelPendingRequests();
-            }
+            //     if (cts.IsCancellationRequested)
+            //         client.CancelPendingRequests();
+            // }
 
             #endregion
 
